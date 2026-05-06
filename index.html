@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Game</title>
+  <meta name="description" content="Video Game" />
+  <style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100vw; min-height: 100vh; font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #000000; color: #1a1a1a; }
+body { overflow-y: auto; overflow-x: hidden; display: flex; align-items: center; justify-content: center; }
+
+#game-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+}
+
+#title-bar {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: #ff2222;
+  text-shadow:
+    0 0 8px #ff2222,
+    0 0 20px #cc0000,
+    0 0 40px #880000;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  animation: flicker 3s infinite;
+}
+
+#subtitle {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  color: #ffaaaa;
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 6px #ff4444;
+  text-transform: uppercase;
+}
+
+#gameCanvas {
+  display: block;
+  border: 4px solid #ff2222;
+  box-shadow:
+    0 0 12px #ff2222,
+    0 0 40px #cc0000,
+    0 0 80px #440000;
+  background: #0a0000;
+  image-rendering: pixelated;
+}
+
+@keyframes flicker {
+  0%   { opacity: 1; }
+  92%  { opacity: 1; }
+  93%  { opacity: 0.6; }
+  94%  { opacity: 1; }
+  96%  { opacity: 0.7; }
+  97%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+  </style>
+</head>
+<body>
+<div id="game-wrapper">
+  <div id="title-bar">🟥 RED MAZE 🟥</div>
+  <canvas id="gameCanvas"></canvas>
+  <div id="subtitle">USE ARROW KEYS TO MOVE &nbsp;|&nbsp; EXIT THROUGH THE CORNERS</div>
+</div>
+
+<script>
+// ── RED SQUARE MAZE ──────────────────────────────────────────────────────────
+
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+
+// Grid dimensions (tiles)
+const COLS = 39;   // odd so centre tile exists
+const ROWS = 31;
+const TILE = 19;   // px per tile (was 24, reduced by ~20%)
+
+canvas.width  = COLS * TILE;
+canvas.height = ROWS * TILE;
+
+// Tile types
+const TRAIL = 0;
+const WALL  = 1;
+
+// ── Simple deterministic PRNG (mulberry32) ────────────────────────────────────
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// ── Build the maze grid ───────────────────────────────────────────────────────
+
+let grid = [];
+
+function buildMaze() {
+  // 1. Fill everything with WALL
+  for (let r = 0; r < ROWS; r++) {
+    grid[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      grid[r][c] = WALL;
+    }
+  }
+
+  // 2. The "cell" grid lives on even indices 0,2,4,...
+  const cellRows = Math.floor(ROWS / 2);  // 15
+  const cellCols = Math.floor(COLS / 2);  // 19
+
+  const visited = [];
+  for (let r = 0; r < cellRows; r++) {
+    visited[r] = new Array(cellCols).fill(false);
+  }
+
+  const rng = mulberry32(1337);
+
+  function openCell(cr, cc) {
+    grid[cr * 2][cc * 2] = TRAIL;
+  }
+
+  function openWall(cr1, cc1, cr2, cc2) {
+    const wr = cr1 + cr2;
+    const wc = cc1 + cc2;
+    grid[wr][wc] = TRAIL;
+  }
+
+  function dfs(cr, cc) {
+    visited[cr][cc] = true;
+    openCell(cr, cc);
+
+    const dirs = [
+      [-1, 0], [1, 0], [0, -1], [0, 1]
+    ];
+    for (let i = dirs.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+    }
+
+    for (const [dr, dc] of dirs) {
+      const nr = cr + dr;
+      const nc = cc + dc;
+      if (nr >= 0 && nr < cellRows && nc >= 0 && nc < cellCols && !visited[nr][nc]) {
+        openWall(cr, cc, nr, nc);
+        dfs(nr, nc);
+      }
+    }
+  }
+
+  dfs(Math.floor(cellRows / 2), Math.floor(cellCols / 2));
+
+  // Open every even-row corridor
+  for (let r = 0; r < ROWS; r += 2) {
+    for (let c = 0; c < COLS; c++) {
+      grid[r][c] = TRAIL;
+    }
+  }
+
+  // Loop-cutting
+  const rng2 = mulberry32(9999);
+  for (let r = 1; r < ROWS - 1; r += 2) {
+    for (let c = 1; c < COLS - 1; c += 2) {
+      if (rng2() < 0.55) {
+        grid[r][c] = TRAIL;
+      }
+      if (c + 1 < COLS - 1 && rng2() < 0.45) {
+        grid[r][c + 1] = TRAIL;
+      }
+    }
+  }
+
+  // Open vertical corridors on even columns
+  for (let c = 0; c < COLS; c += 2) {
+    for (let r = 0; r < ROWS; r++) {
+      grid[r][c] = TRAIL;
+    }
+  }
+
+  // Scatter wide-open rooms
+  const rng3 = mulberry32(5555);
+  const roomCount = 10;
+  for (let i = 0; i < roomCount; i++) {
+    const rr = 2 + Math.floor(rng3() * (ROWS - 6));
+    const rc = 2 + Math.floor(rng3() * (COLS - 6));
+    const rh = 2 + Math.floor(rng3() * 4);
+    const rw = 2 + Math.floor(rng3() * 6);
+    for (let dr = 0; dr < rh; dr++) {
+      for (let dc = 0; dc < rw; dc++) {
+        const tr = rr + dr;
+        const tc = rc + dc;
+        if (tr > 0 && tr < ROWS - 1 && tc > 0 && tc < COLS - 1) {
+          grid[tr][tc] = TRAIL;
+        }
+      }
+    }
+  }
+
+  // Diagonal-ish corridors
+  const rng4 = mulberry32(7777);
+  for (let i = 0; i < 8; i++) {
+    let r = 2 + Math.floor(rng4() * (ROWS - 4));
+    let c = 2 + Math.floor(rng4() * (COLS - 4));
+    const dr = rng4() < 0.5 ? 1 : -1;
+    const dc = rng4() < 0.5 ? 1 : -1;
+    const len = 4 + Math.floor(rng4() * 8);
+    for (let step = 0; step < len; step++) {
+      if (r > 0 && r < ROWS - 1 && c > 0 && c < COLS - 1) {
+        grid[r][c] = TRAIL;
+        grid[r][c + (dc > 0 ? 1 : 0)] = TRAIL;
+        grid[r + (dr > 0 ? 1 : 0)][c] = TRAIL;
+      }
+      r = Math.max(1, Math.min(ROWS - 2, r + dr));
+      c = Math.max(1, Math.min(COLS - 2, c + dc));
+    }
+  }
+
+  // Snake corridors
+  const rng5 = mulberry32(3141);
+  for (let pass = 0; pass < 5; pass++) {
+    let r = 1 + Math.floor(rng5() * (ROWS - 2));
+    let c = 1;
+    const goRight = rng5() < 0.5;
+    while (c > 0 && c < COLS - 1) {
+      grid[r][c] = TRAIL;
+      if (rng5() < 0.2 && r > 1 && r < ROWS - 2) {
+        r += rng5() < 0.5 ? 1 : -1;
+        grid[r][c] = TRAIL;
+      }
+      c += goRight ? 1 : -1;
+    }
+  }
+
+  // Hard border
+  for (let c = 0; c < COLS; c++) {
+    grid[0][c]        = WALL;
+    grid[ROWS - 1][c] = WALL;
+  }
+  for (let r = 0; r < ROWS; r++) {
+    grid[r][0]        = WALL;
+    grid[r][COLS - 1] = WALL;
+  }
+
+  // Corner exit openings — kept clear
+  grid[0][1] = TRAIL; grid[0][2] = TRAIL; grid[0][3] = TRAIL;
+  grid[1][0] = TRAIL; grid[2][0] = TRAIL; grid[3][0] = TRAIL;
+  grid[0][COLS - 2] = TRAIL; grid[0][COLS - 3] = TRAIL; grid[0][COLS - 4] = TRAIL;
+  grid[1][COLS - 1] = TRAIL; grid[2][COLS - 1] = TRAIL; grid[3][COLS - 1] = TRAIL;
+  grid[ROWS - 1][1] = TRAIL; grid[ROWS - 1][2] = TRAIL; grid[ROWS - 1][3] = TRAIL;
+  grid[ROWS - 2][0] = TRAIL; grid[ROWS - 3][0] = TRAIL; grid[ROWS - 4][0] = TRAIL;
+  grid[ROWS - 1][COLS - 2] = TRAIL; grid[ROWS - 1][COLS - 3] = TRAIL; grid[ROWS - 1][COLS - 4] = TRAIL;
+  grid[ROWS - 2][COLS - 1] = TRAIL; grid[ROWS - 3][COLS - 1] = TRAIL; grid[ROWS - 4][COLS - 1] = TRAIL;
+
+  // Ensure inner tiles adjacent to corner exits are open
+  grid[1][1] = TRAIL; grid[2][1] = TRAIL; grid[1][2] = TRAIL; grid[2][2] = TRAIL;
+  grid[1][COLS - 2] = TRAIL; grid[2][COLS - 2] = TRAIL; grid[1][COLS - 3] = TRAIL; grid[2][COLS - 3] = TRAIL;
+  grid[ROWS - 2][1] = TRAIL; grid[ROWS - 3][1] = TRAIL; grid[ROWS - 2][2] = TRAIL; grid[ROWS - 3][2] = TRAIL;
+  grid[ROWS - 2][COLS - 2] = TRAIL; grid[ROWS - 3][COLS - 2] = TRAIL; grid[ROWS - 2][COLS - 3] = TRAIL; grid[ROWS - 3][COLS - 3] = TRAIL;
+
+  // Central open plaza
+  const cr = Math.floor(ROWS / 2);
+  const cc = Math.floor(COLS / 2);
+  for (let dr = -3; dr <= 3; dr++) {
+    for (let dc = -5; dc <= 5; dc++) {
+      grid[cr + dr][cc + dc] = TRAIL;
+    }
+  }
+}
+
+// ── Tile drawing ──────────────────────────────────────────────────────────────
+
+function drawWallBlock(x, y, w, h) {
+  // Solid red square
+  ctx.fillStyle = '#cc0000';
+  ctx.fillRect(x, y, w, h);
+  // Slightly lighter top/left edge for a subtle bevel
+  ctx.fillStyle = '#ff3333';
+  ctx.fillRect(x, y, w, 2);
+  ctx.fillRect(x, y, 2, h);
+  // Darker bottom/right edge
+  ctx.fillStyle = '#880000';
+  ctx.fillRect(x, y + h - 2, w, 2);
+  ctx.fillRect(x + w - 2, y, 2, h);
+}
+
+function drawTrail(x, y, w, h) {
+  ctx.fillStyle = '#0a0000';
+  ctx.fillRect(x, y, w, h);
+}
+
+// ── Player ────────────────────────────────────────────────────────────────────
+
+// Player radius is set so it is ~20% smaller than a tile gap (TILE px wide).
+const PLAYER_RADIUS = Math.round(TILE / 1.2 / 2);
+
+const player = {
+  x: (Math.floor(COLS / 2)) * TILE,
+  y: (Math.floor(ROWS / 2)) * TILE,
+  speed: 2,
+  dx: 0,
+  dy: 0,
+  pendingDx: 0,
+  pendingDy: 0,
+  mouthAngle: 0.25,
+  mouthDir: 1,
+  facingAngle: 0,
+};
+
+// ── Green Ball ────────────────────────────────────────────────────────────────
+
+const ball = {
+  x: 0,
+  y: 0,
+  speed: 1.0,
+  dx: 1,
+  dy: 0,
+  stepTimer: 0,
+  stepInterval: 18, // frames between direction decisions
+  rng: mulberry32(2468),
+};
+
+function findOpenTile() {
+  // Find a random open tile that isn't the player's starting tile
+  const startC = Math.floor(COLS / 2);
+  const startR = Math.floor(ROWS / 2);
+  let c, r;
+  do {
+    c = 1 + Math.floor(ball.rng() * (COLS - 2));
+    r = 1 + Math.floor(ball.rng() * (ROWS - 2));
+  } while (grid[r][c] === WALL || (Math.abs(c - startC) < 4 && Math.abs(r - startR) < 4));
+  return { x: c * TILE, y: r * TILE };
+}
+
+function resetBall() {
+  const pos = findOpenTile();
+  ball.x = pos.x;
+  ball.y = pos.y;
+  // Pick a random initial direction
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  const d = dirs[Math.floor(ball.rng() * dirs.length)];
+  ball.dx = d[0];
+  ball.dy = d[1];
+  ball.stepTimer = 0;
+}
+
+function updateBall() {
+  const speed = ball.speed;
+
+  // Try to keep moving in current direction
+  let nx = ball.x + ball.dx * speed;
+  let ny = ball.y + ball.dy * speed;
+
+  ball.stepTimer++;
+
+  // Periodically try to pick a new direction (or when hitting a wall)
+  const hitWall = !canMove(nx, ny);
+  if (hitWall || ball.stepTimer >= ball.stepInterval) {
+    ball.stepTimer = 0;
+
+    // Gather all valid directions
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    // Shuffle
+    for (let i = dirs.length - 1; i > 0; i--) {
+      const j = Math.floor(ball.rng() * (i + 1));
+      [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+    }
+
+    // Prefer not reversing if other options exist
+    const reverse = [-ball.dx, -ball.dy];
+    dirs.sort((a, b) => {
+      const aIsReverse = a[0] === reverse[0] && a[1] === reverse[1] ? 1 : 0;
+      const bIsReverse = b[0] === reverse[0] && b[1] === reverse[1] ? 1 : 0;
+      return aIsReverse - bIsReverse;
+    });
+
+    let moved = false;
+    for (const [ddx, ddy] of dirs) {
+      const tnx = ball.x + ddx * speed;
+      const tny = ball.y + ddy * speed;
+      if (canMove(tnx, tny)) {
+        ball.dx = ddx;
+        ball.dy = ddy;
+        nx = tnx;
+        ny = tny;
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) {
+      nx = ball.x;
+      ny = ball.y;
+    }
+  }
+
+  ball.x = nx;
+  ball.y = ny;
+
+  // Keep ball inside canvas
+  ball.x = Math.max(0, Math.min(canvas.width - TILE, ball.x));
+  ball.y = Math.max(0, Math.min(canvas.height - TILE, ball.y));
+}
+
+function drawBall() {
+  const cx = ball.x + TILE / 2;
+  const cy = ball.y + TILE / 2;
+  const r  = PLAYER_RADIUS - 1;
+
+  // Glow
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r + 8);
+  grad.addColorStop(0,   'rgba(100,255,100,0.6)');
+  grad.addColorStop(0.5, 'rgba(0,200,0,0.2)');
+  grad.addColorStop(1,   'rgba(0,100,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  const bodyGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
+  bodyGrad.addColorStop(0, '#aaffaa');
+  bodyGrad.addColorStop(0.4, '#00dd00');
+  bodyGrad.addColorStop(1, '#004400');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── Collision check between player and ball ───────────────────────────────────
+
+function checkEat() {
+  const dist = Math.hypot(
+    (player.x + TILE / 2) - (ball.x + TILE / 2),
+    (player.y + TILE / 2) - (ball.y + TILE / 2)
+  );
+  return dist < TILE * 0.85;
+}
+
+// ── Reset game ────────────────────────────────────────────────────────────────
+
+function resetGame() {
+  player.x = Math.floor(COLS / 2) * TILE;
+  player.y = Math.floor(ROWS / 2) * TILE;
+  player.dx = 0;
+  player.dy = 0;
+  player.pendingDx = 0;
+  player.pendingDy = 0;
+  player.facingAngle = 0;
+  player.mouthAngle = 0.25;
+  player.mouthDir = 1;
+  resetBall();
+}
+
+// ── Input ─────────────────────────────────────────────────────────────────────
+
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'ArrowRight') { player.pendingDx =  1; player.pendingDy = 0; }
+  if (e.key === 'ArrowLeft')  { player.pendingDx = -1; player.pendingDy = 0; }
+  if (e.key === 'ArrowDown')  { player.pendingDx =  0; player.pendingDy =  1; }
+  if (e.key === 'ArrowUp')    { player.pendingDx =  0; player.pendingDy = -1; }
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// ── Collision helpers ─────────────────────────────────────────────────────────
+
+function tileAt(px, py) {
+  const c = Math.floor(px / TILE);
+  const r = Math.floor(py / TILE);
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return TRAIL;
+  return grid[r][c];
+}
+
+function playerCorners(px, py) {
+  // Use PLAYER_RADIUS to define the collision box
+  const half   = TILE / 2;
+  const margin = half - PLAYER_RADIUS + 1;
+  const s      = TILE - margin * 2;
+  return [
+    [px + margin,     py + margin],
+    [px + margin + s, py + margin],
+    [px + margin,     py + margin + s],
+    [px + margin + s, py + margin + s],
+  ];
+}
+
+function canMove(px, py) {
+  for (const [cx, cy] of playerCorners(px, py)) {
+    if (tileAt(cx, cy) === WALL) return false;
+  }
+  return true;
+}
+
+// ── Wrap / exit through corners ───────────────────────────────────────────────
+
+function wrapPlayer() {
+  const totalW = COLS * TILE;
+  const totalH = ROWS * TILE;
+  if (player.x + TILE < 0)  player.x = totalW - 1;
+  if (player.x > totalW)    player.x = -TILE + 1;
+  if (player.y + TILE < 0)  player.y = totalH - 1;
+  if (player.y > totalH)    player.y = -TILE + 1;
+}
+
+// ── Update ────────────────────────────────────────────────────────────────────
+
+function update() {
+  const speed = player.speed;
+  let newX = player.x + player.pendingDx * speed;
+  let newY = player.y + player.pendingDy * speed;
+
+  if (canMove(newX, newY)) {
+    player.dx = player.pendingDx;
+    player.dy = player.pendingDy;
+  } else {
+    newX = player.x + player.dx * speed;
+    newY = player.y + player.dy * speed;
+    if (!canMove(newX, newY)) {
+      newX = player.x;
+      newY = player.y;
+    }
+  }
+
+  player.x = newX;
+  player.y = newY;
+
+  wrapPlayer();
+
+  if (player.dx !== 0 || player.dy !== 0) {
+    player.facingAngle = Math.atan2(player.dy, player.dx);
+  }
+
+  player.mouthAngle += 0.07 * player.mouthDir;
+  if (player.mouthAngle > 0.28 || player.mouthAngle < 0.02) player.mouthDir *= -1;
+
+  updateBall();
+
+  if (checkEat()) {
+    resetGame();
+  }
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+
+function drawGrid() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = c * TILE;
+      const y = r * TILE;
+      if (grid[r][c] === WALL) {
+        drawWallBlock(x, y, TILE, TILE);
+      } else {
+        drawTrail(x, y, TILE, TILE);
+      }
+    }
+  }
+
+  // Corner exit highlights
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fillRect(0, 0, 3 * TILE, 3 * TILE);
+  ctx.fillRect((COLS - 3) * TILE, 0, 3 * TILE, 3 * TILE);
+  ctx.fillRect(0, (ROWS - 3) * TILE, 3 * TILE, 3 * TILE);
+  ctx.fillRect((COLS - 3) * TILE, (ROWS - 3) * TILE, 3 * TILE, 3 * TILE);
+}
+
+function drawPlayer() {
+  const cx = player.x + TILE / 2;
+  const cy = player.y + TILE / 2;
+  const r  = PLAYER_RADIUS;
+  const mouth = player.mouthAngle * Math.PI;
+  const a     = player.facingAngle;
+
+  // Glow
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r + 10);
+  grad.addColorStop(0,   'rgba(255,255,255,0.5)');
+  grad.addColorStop(0.5, 'rgba(200,200,255,0.15)');
+  grad.addColorStop(1,   'rgba(100,100,255,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 10, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r, a + mouth, a + Math.PI * 2 - mouth);
+  ctx.closePath();
+  ctx.fill();
+
+  // Eye
+  const eyeX = cx + Math.cos(a - Math.PI * 0.35) * r * 0.55;
+  const eyeY = cy + Math.sin(a - Math.PI * 0.35) * r * 0.55;
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.arc(eyeX, eyeY, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawScanlines() {
+  ctx.save();
+  for (let y = 0; y < canvas.height; y += 4) {
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, y, canvas.width, 2);
+  }
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
+  drawBall();
+  drawPlayer();
+  drawScanlines();
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+buildMaze();
+resetBall();
+loop();
+
+</script>
+</body>
+</html>
